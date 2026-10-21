@@ -120,23 +120,35 @@ class ToyLauncher:
         self.motors = None
         self.detector = None
         self.lights = None
+        self.loaded = None
+        self.last_toy_status = float('-inf')
+
+    def toy_loaded(self):
+        if self.detector is None:
+            import MouseDetector
+            self.detector = MouseDetector
+            self.detector.SetupMouseDetector()
+        loaded = self.detector.CheckMousePresent() == 0
+        now = time.monotonic()
+        if loaded != self.loaded or now - self.last_toy_status >= 10:
+            LOG.info('Toy loaded: %s', 'YES' if loaded else 'NO')
+            self.loaded = loaded
+            self.last_toy_status = now
+        return loaded
 
     def launch(self):
         if self.lights is None:
             from race_lights import RaceLights
             self.lights = RaceLights()
         self.lights.start()
-        if self.detector is None:
-            import MouseDetector
-            self.detector = MouseDetector
-            self.detector.SetupMouseDetector()
-        if self.detector.CheckMousePresent() != 0:
+        if not self.toy_loaded():
             LOG.warning('Cat accepted but no toy is loaded; launch skipped')
             return False
         if self.motors is None:
             import Motors
             self.motors = Motors
         launch_sequence(self.motors)
+        self.toy_loaded()
         return True
 
     def stop(self):
@@ -220,6 +232,8 @@ def main():
     LOG.info('Mode=%s threshold=%.0f%% cooldown=%.0fs model=%s model_bytes=%s',
              'ARMED' if args.armed else 'DRY RUN', args.confidence * 100, args.cooldown, classifier.name, args.model.stat().st_size)
     try:
+        if args.armed:
+            launcher.toy_loaded()
         with PiCamera() as camera:
             camera.resolution = (args.width, args.height)
             camera.framerate = 10
@@ -242,6 +256,8 @@ def main():
                     now = time.monotonic()
                     if stopping or (args.seconds and now - start >= args.seconds):
                         break
+                    if args.armed:
+                        launcher.toy_loaded()
                     moving = detector.detect(frame)
                     if index < 20 or not policy.observe(moving, now):
                         continue

@@ -13,6 +13,9 @@ the cat score meets the configured threshold. No cloud inference is used.
 - Configurable confidence threshold (60% by default).
 - Five-second retries for continuing movement and a 30-second launch cooldown.
 - Toy-present sensor interlock and motor shutdown after a launch error.
+- On cat acceptance, all eight LEDs show red for 1 second, yellow for 1 second,
+  green for 3 seconds, then turn off, alongside the existing launch sequence.
+  The lights also run when no toy is loaded; the sensor still prevents launch.
 - At most 20 local motion pictures, excluded from Git.
 
 ## Hardware and software
@@ -58,7 +61,7 @@ runtime image classification does not.
 
 ```sh
 cd /home/pi/Pi_MouseAir
-python3 -m unittest test_motion_policy -v
+python3 -m unittest test_motion_policy test_race_lights -v
 python3 -u MouseAirMotion.py --dry-run
 ```
 
@@ -71,6 +74,13 @@ python3 -u MouseAirMotion.py --armed --confidence 0.60 --cooldown 30
 
 Stop with Ctrl-C. Do not run another hardware controller or motor test script
 concurrently. See [camera and confidence tuning](MOTION_README.md).
+
+The RGBW stick uses the configured `PixelPin` (GPIO 21 on the tested Pi).
+The installed legacy `neopixel`/`rpi-ws281x` driver needs root for DMA access;
+the controller starts an LED-only helper with `sudo -n /usr/bin/python3`.
+The Pi user therefore needs noninteractive sudo for that helper. Motors and
+classification remain in the ordinary user process. An LED startup failure
+cancels the launch. Dry-run and image classification leave the LEDs off.
 
 ## Local files and publishing
 

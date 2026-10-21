@@ -119,8 +119,13 @@ class ToyLauncher:
     def __init__(self):
         self.motors = None
         self.detector = None
+        self.lights = None
 
     def launch(self):
+        if self.lights is None:
+            from race_lights import RaceLights
+            self.lights = RaceLights()
+        self.lights.start()
         if self.detector is None:
             import MouseDetector
             self.detector = MouseDetector
@@ -135,9 +140,13 @@ class ToyLauncher:
         return True
 
     def stop(self):
-        if self.motors is not None:
-            self.motors.launchMotorsOff()
-            self.motors.pwm.set_pwm(0, 0)
+        try:
+            if self.motors is not None:
+                self.motors.launchMotorsOff()
+                self.motors.pwm.set_pwm(0, 0)
+        finally:
+            if self.lights is not None:
+                self.lights.stop()
 
 
 def main():

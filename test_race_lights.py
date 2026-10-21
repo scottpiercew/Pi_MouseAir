@@ -5,6 +5,16 @@ from MouseAirMotion import ToyLauncher
 
 
 class RaceLightsTests(unittest.TestCase):
+    def test_toy_status_uses_active_low_sensor_and_logs_changes(self):
+        from unittest.mock import Mock
+        launcher = ToyLauncher()
+        launcher.detector = Mock()
+        launcher.detector.CheckMousePresent.side_effect = [1, 1, 0, 0, 1]
+        with self.assertLogs('MouseAirMotion', level='INFO') as logs:
+            states = [launcher.toy_loaded() for _ in range(5)]
+        self.assertEqual(states, [False, False, True, True, False])
+        self.assertEqual([line.rsplit(': ', 1)[-1] for line in logs.output], ['NO', 'YES', 'NO'])
+
     def test_colors_and_timing(self):
         events = []
         race_sequence(lambda *rgb: events.append(rgb),
@@ -37,7 +47,7 @@ class RaceLightsTests(unittest.TestCase):
         launcher.lights, launcher.detector, launcher.motors = Lights(), Detector(), object()
         with patch('MouseAirMotion.launch_sequence', lambda _: calls.append('motors')):
             self.assertTrue(launcher.launch())
-        self.assertEqual(calls, ['lights', 'sensor', 'motors'])
+        self.assertEqual(calls, ['lights', 'sensor', 'motors', 'sensor'])
 
     def test_lights_also_run_without_loaded_toy(self):
         from unittest.mock import Mock

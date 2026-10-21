@@ -121,23 +121,32 @@ class ToyLauncher:
         self.motors = None
         self.detector = None
         self.lights = None
+        self.loaded = None
+
+    def toy_loaded(self):
+        if self.detector is None:
+            import MouseDetector
+            self.detector = MouseDetector
+            self.detector.SetupMouseDetector()
+        loaded = self.detector.CheckMousePresent() == 0
+        if loaded != self.loaded:
+            LOG.info('Toy loaded: %s', 'YES' if loaded else 'NO')
+            self.loaded = loaded
+        return loaded
 
     def launch(self):
         if self.lights is None:
             from race_lights import RaceLights
             self.lights = RaceLights()
         self.lights.start()
-        if self.detector is None:
-            import MouseDetector
-            self.detector = MouseDetector
-            self.detector.SetupMouseDetector()
-        if self.detector.CheckMousePresent() != 0:
+        if not self.toy_loaded():
             LOG.warning('Cat accepted but no toy is loaded; launch skipped')
             return False
         if self.motors is None:
             import Motors
             self.motors = Motors
         launch_sequence(self.motors)
+        self.toy_loaded()
         return True
 
     def stop(self):
@@ -269,6 +278,8 @@ def main():
     def should_stop():
         return stopping or bool(args.seconds and time.monotonic() - start >= args.seconds)
     try:
+        if args.armed:
+            launcher.toy_loaded()
         if args.trigger == 'camera':
             from picamera import PiCamera
             from picamera.array import PiRGBArray
@@ -283,6 +294,8 @@ def main():
                         now = time.monotonic()
                         if stopping or (args.seconds and now - start >= args.seconds):
                             break
+                        if args.armed:
+                            launcher.toy_loaded()
                         moving = detector.detect(frame)
                         if index < 20 or not policy.observe(moving, now):
                             continue
@@ -296,10 +309,14 @@ def main():
             try:
                 while not should_stop():
                     now = time.monotonic()
+                    if args.armed:
+                        launcher.toy_loaded()
                     distance = ranger.read_cm()
                     event = distance_trigger.observe(distance, now, max(last_capture + args.retry_seconds, policy.next_launch))
                     if now - last_status >= 10:
-                        LOG.info('Ultrasonic distance=%s', 'no usable echo' if distance_trigger.distance is None else '%.1fcm' % distance_trigger.distance)
+                        LOG.info('Ultrasonic distance=%s; toy loaded: %s',
+                                 'no usable echo' if distance_trigger.distance is None else '%.1fcm' % distance_trigger.distance,
+                                 ('YES' if launcher.loaded else 'NO') if args.armed else 'not checked (dry run)')
                         last_status = now
                     if event and not should_stop():
                         last_capture = now

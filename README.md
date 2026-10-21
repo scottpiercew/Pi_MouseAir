@@ -22,6 +22,8 @@ mode remains available with `--trigger camera`; `main` keeps that behavior.
 - Configurable confidence threshold (60% by default).
 - Five-second retries for continuing movement and a 30-second launch cooldown.
 - Toy-present sensor interlock and motor shutdown after a launch error.
+- Armed mode logs `Toy loaded: YES/NO` at startup and when the sensor changes;
+  ultrasonic status lines repeat the current toy-loaded state every 10 seconds.
 - On cat acceptance, all eight LEDs show red for 1 second, yellow for 1 second,
   green for 3 seconds, then turn off, alongside the existing launch sequence.
   The lights also run when no toy is loaded; the sensor still prevents launch.

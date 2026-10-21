@@ -1,0 +1,21 @@
+{
+  "name": "MobileNetV2 ImageNet",
+  "input_size": 224,
+  "input_normalization": "minus_one_to_one",
+  "output_classes": 1000,
+  "cat_indices": [
+    281,
+    282,
+    283,
+    284,
+    285
+  ],
+  "cat_labels": {
+    "281": "tabby",
+    "282": "tiger_cat",
+    "283": "Persian_cat",
+    "284": "Siamese_cat",
+    "285": "Egyptian_cat"
+  },
+  "confidence": 0.6
+}

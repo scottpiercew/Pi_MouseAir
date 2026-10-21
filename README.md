@@ -2,13 +2,22 @@
 
 Motion-triggered, on-device cat detection and cat-toy control for Raspberry Pi.
 
-`MouseAirMotion.py` detects camera movement, saves a picture, classifies it
+On the `feature/ultrasonic-trigger` branch, `MouseAirMotion.py` detects changes
+in ultrasonic distance, opens the camera for one still picture, classifies it
 locally with a quantized EfficientNet-B0 model, and launches a loaded toy when
 the cat score meets the configured threshold. No cloud inference is used.
+
+The camera is closed between distance events. The previous frame-comparison
+mode remains available with `--trigger camera`; `main` keeps that behavior.
 
 ## Current controller
 
 - Headless 1280×960 capture with configurable backlight exposure settings.
+- Ultrasonic polling every 0.25 seconds; median of three valid readings.
+- Changes of at least 8 cm toward or away from the ranger trigger a photo
+  anywhere within 3–350 cm. First stable in-range presence also triggers.
+- Invalid/out-of-range echoes never trigger pictures. Repeated missing echoes
+  rearm presence detection. Stationary objects do not cause repeated photos.
 - Full-frame and perch-view classification using domestic-cat ImageNet labels.
 - Configurable confidence threshold (60% by default).
 - Five-second retries for continuing movement and a 30-second launch cooldown.
@@ -61,7 +70,7 @@ runtime image classification does not.
 
 ```sh
 cd /home/pi/Pi_MouseAir
-python3 -m unittest test_motion_policy test_race_lights -v
+python3 -m unittest test_motion_policy test_race_lights test_distance_trigger test_ultrasonic_controller -v
 python3 -u MouseAirMotion.py --dry-run
 ```
 
@@ -81,6 +90,40 @@ the controller starts an LED-only helper with `sudo -n /usr/bin/python3`.
 The Pi user therefore needs noninteractive sudo for that helper. Motors and
 classification remain in the ordinary user process. An LED startup failure
 cancels the launch. Dry-run and image classification leave the LEDs off.
+
+## Ultrasonic experiment and rollback
+
+The Grove ranger uses `UltrasonicLevelPin` (GPIO 26 on the tested system).
+It has two round transducers but is one distance sensor. The new bounded
+driver uses one signal pin and short sleeps instead of the legacy long pulse
+and CPU-spinning waits. No GPIO daemon is required. Test raw distances with
+`python3 ultrasonic_ranger.py` (40 readings; no camera or motors).
+
+Tune the feature without a near/far cutoff:
+
+```sh
+python3 -u MouseAirMotion.py --trigger ultrasonic --armed \
+  --distance-min 3 --distance-max 350 --distance-change 8 \
+  --distance-interval 0.25 --camera-warmup 2
+```
+
+`--retry-seconds` limits pictures to at most one per five seconds by default;
+launches still have a 30-second cooldown. A distance change held during the
+cooldown remains pending. Each still waits two seconds for camera exposure,
+then classification takes additional time. Fast-moving cats can leave before
+the picture. Fur, target angle, and motion sideways at a constant distance can
+also make ultrasonic detection miss a cat. Camera triggering covers a wider
+view and may be more reliable when the cat crosses the sensor beam.
+
+To compare modes, stop the running controller with Ctrl-C and run:
+
+```sh
+python3 -u MouseAirMotion.py --trigger camera --armed
+```
+
+To revert the experimental code entirely, stop it, `git checkout main`, then
+run `python3 -u MouseAirMotion.py --armed`. The race-light feature is retained
+on `main`. Never run both modes at the same time.
 
 ## Local files and publishing
 

@@ -1,5 +1,11 @@
 # Motion-triggered on-device cat detection
 
+**Feature branch `feature/ultrasonic-trigger`:** the default trigger is now
+ultrasonic distance change, with the camera closed between still captures.
+See the repository README for range/filter settings and rollback commands.
+The frame-comparison behavior described below is available with
+`--trigger camera`; `main` retains the original camera trigger.
+
 Entry point: `/home/pi/Pi_MouseAir/MouseAirMotion.py`.
 The original controller, configuration, and servo calibration are preserved.
 

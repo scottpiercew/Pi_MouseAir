@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Motion -> saved picture -> on-device cat inference -> optional toy launch."""
+"""Ultrasonic or camera motion -> still -> local cat inference -> toy launch."""
 import argparse
 import fcntl
 import json
@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import signal
 import time
+import math
 
 os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
 from motion_policy import MotionPolicy, launch_sequence, cat_probability
@@ -155,7 +156,13 @@ def main():
     parser.add_argument('--confidence', type=float, default=None, help='Cat threshold; default 0.60 for ImageNet models, 0.90 for the original model')
     parser.add_argument('--cat-index', type=int, choices=(0, 1), default=0)
     parser.add_argument('--cooldown', type=float, default=30.0)
-    parser.add_argument('--retry-seconds', type=float, default=5.0, help='Recheck continuing movement after a rejected image')
+    parser.add_argument('--retry-seconds', type=float, default=5.0, help='Minimum ultrasonic photo interval; retry continuing camera motion')
+    parser.add_argument('--trigger', choices=('ultrasonic', 'camera'), default='ultrasonic')
+    parser.add_argument('--distance-min', type=float, default=3.0, help='Minimum usable range in cm')
+    parser.add_argument('--distance-max', type=float, default=350.0, help='Maximum usable range in cm')
+    parser.add_argument('--distance-change', type=float, default=8.0, help='Change in cm that triggers a photo in either direction')
+    parser.add_argument('--distance-interval', type=float, default=0.25)
+    parser.add_argument('--camera-warmup', type=float, default=2.0, help='Exposure settling time for each ultrasonic-triggered still')
     parser.add_argument('--motion-area', type=int, default=800)
     parser.add_argument('--rotation', type=int, choices=(0, 90, 180, 270), default=180)
     parser.add_argument('--width', type=int, default=1280)
@@ -171,6 +178,13 @@ def main():
     mode.add_argument('--armed', action='store_true', help='Enable real toy launches after cat detection')
     mode.add_argument('--dry-run', action='store_true', help='Log decisions without importing motor drivers (default)')
     args = parser.parse_args()
+    from distance_trigger import DistanceTrigger
+    try:
+        distance_trigger = DistanceTrigger(args.distance_min, args.distance_max, args.distance_change)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if not all(math.isfinite(v) for v in (args.distance_interval, args.camera_warmup, args.retry_seconds, args.cooldown, args.seconds)) or args.distance_interval < 0.1 or args.camera_warmup < 0 or args.retry_seconds <= 0:
+        parser.error('Use finite timing values, interval >= 0.1s, warmup >= 0, retry > 0')
     if args.motion_area <= 0 or args.seconds < 0:
         parser.error('Motion area must be positive; seconds cannot be negative')
     if args.width < 320 or args.width > 1920 or args.height < 240 or args.height > 1440 or args.width % 32 or args.height % 16:
@@ -197,8 +211,6 @@ def main():
                           'inference_seconds': time.monotonic() - before,
                           'best_view': classifier.last_view, 'motors_enabled': False}))
         return
-    from picamera import PiCamera
-    from picamera.array import PiRGBArray
     lock = open('/tmp/mouseair-motion-{}.lock'.format(os.getuid()), 'w')
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -219,52 +231,98 @@ def main():
     capture_count = 0
     LOG.info('Mode=%s threshold=%.0f%% cooldown=%.0fs model=%s model_bytes=%s',
              'ARMED' if args.armed else 'DRY RUN', args.confidence * 100, args.cooldown, classifier.name, args.model.stat().st_size)
+    def configure_camera(camera):
+        camera.resolution = (args.width, args.height)
+        camera.framerate = 10
+        camera.rotation = args.rotation
+        camera.exposure_mode = args.exposure_mode
+        camera.meter_mode = args.meter_mode
+        camera.exposure_compensation = args.exposure_compensation
+        camera.drc_strength = args.drc
+        camera.brightness = args.brightness
+        camera.awb_mode = 'auto'
+        LOG.info('Camera=%sx%s metering=%s exposure=%s EV=%+.1f DRC=%s brightness=%s',
+                 args.width, args.height, args.meter_mode, args.exposure_mode,
+                 args.exposure_compensation / 6.0, args.drc, args.brightness)
+    def process_frame(frame, now):
+        nonlocal capture_count
+        filename = snapshots / ('motion-{}.jpg'.format(time.time_ns()))
+        temporary = filename.with_name(filename.stem + '.tmp.jpg')
+        if not cv2.imwrite(str(temporary), frame, [cv2.IMWRITE_JPEG_QUALITY, 95]):
+            raise RuntimeError('Could not save motion snapshot')
+        temporary.replace(filename)
+        capture_count += 1
+        before = time.monotonic()
+        score = classifier.classify(frame)
+        accepted = policy.accepts_cat(score, now)
+        LOG.info('Motion captured=%s cat=%.1f%% accepted=%s view=%s inference=%.3fs', filename.name, score*100, accepted, classifier.last_view, time.monotonic()-before)
+        if accepted:
+            if args.armed:
+                if launcher.launch():
+                    LOG.info('Toy launched')
+                    policy.launched(time.monotonic())
+            else:
+                LOG.info('DRY RUN: would launch if a toy is loaded')
+                policy.launched(time.monotonic())
+        for old in sorted(snapshots.glob('motion-*.jpg'))[:-20]:
+            old.unlink()
+    def should_stop():
+        return stopping or bool(args.seconds and time.monotonic() - start >= args.seconds)
     try:
-        with PiCamera() as camera:
-            camera.resolution = (args.width, args.height)
-            camera.framerate = 10
-            camera.rotation = args.rotation
-            camera.exposure_mode = args.exposure_mode
-            camera.meter_mode = args.meter_mode
-            camera.exposure_compensation = args.exposure_compensation
-            camera.drc_strength = args.drc
-            camera.brightness = args.brightness
-            camera.awb_mode = 'auto'
-            LOG.info('Camera=%sx%s metering=%s exposure=%s EV=%+.1f DRC=%s brightness=%s',
-                     args.width, args.height, args.meter_mode, args.exposure_mode,
-                     args.exposure_compensation / 6.0, args.drc, args.brightness)
-            with PiRGBArray(camera, size=(args.width, args.height)) as raw:
-                time.sleep(4)
-                for index, captured in enumerate(camera.capture_continuous(raw, format='bgr', use_video_port=True)):
-                    frame_count += 1
-                    frame = captured.array.copy()
-                    raw.truncate(0)
+        if args.trigger == 'camera':
+            from picamera import PiCamera
+            from picamera.array import PiRGBArray
+            with PiCamera() as camera:
+                configure_camera(camera)
+                with PiRGBArray(camera, size=(args.width, args.height)) as raw:
+                    time.sleep(4)
+                    for index, captured in enumerate(camera.capture_continuous(raw, format='bgr', use_video_port=True)):
+                        frame_count += 1
+                        frame = captured.array.copy()
+                        raw.truncate(0)
+                        now = time.monotonic()
+                        if stopping or (args.seconds and now - start >= args.seconds):
+                            break
+                        moving = detector.detect(frame)
+                        if index < 20 or not policy.observe(moving, now):
+                            continue
+                        process_frame(frame, now)
+        else:
+            from ultrasonic_ranger import UltrasonicRanger
+            ranger = UltrasonicRanger()
+            last_capture = float('-inf')
+            last_status = float('-inf')
+            LOG.info('Ultrasonic GPIO=%s range=%.0f..%.0fcm change=%.0fcm interval=%.2fs; camera closed while idle', ranger.pin, args.distance_min, args.distance_max, args.distance_change, args.distance_interval)
+            try:
+                while not should_stop():
                     now = time.monotonic()
-                    if stopping or (args.seconds and now - start >= args.seconds):
-                        break
-                    moving = detector.detect(frame)
-                    if index < 20 or not policy.observe(moving, now):
-                        continue
-                    filename = snapshots / ('motion-{}.jpg'.format(time.time_ns()))
-                    temporary = filename.with_name(filename.stem + '.tmp.jpg')
-                    if not cv2.imwrite(str(temporary), frame, [cv2.IMWRITE_JPEG_QUALITY, 95]):
-                        raise RuntimeError('Could not save motion snapshot')
-                    temporary.replace(filename)
-                    capture_count += 1
-                    before = time.monotonic()
-                    score = classifier.classify(frame)
-                    accepted = policy.accepts_cat(score, now)
-                    LOG.info('Motion captured=%s cat=%.1f%% accepted=%s view=%s inference=%.3fs', filename.name, score*100, accepted, classifier.last_view, time.monotonic()-before)
-                    if accepted:
-                        if args.armed:
-                            if launcher.launch():
-                                LOG.info('Toy launched')
-                                policy.launched(time.monotonic())
-                        else:
-                            LOG.info('DRY RUN: would launch if a toy is loaded')
-                            policy.launched(time.monotonic())
-                    for old in sorted(snapshots.glob('motion-*.jpg'))[:-20]:
-                        old.unlink()
+                    distance = ranger.read_cm()
+                    event = distance_trigger.observe(distance, now, max(last_capture + args.retry_seconds, policy.next_launch))
+                    if now - last_status >= 10:
+                        LOG.info('Ultrasonic distance=%s', 'no usable echo' if distance_trigger.distance is None else '%.1fcm' % distance_trigger.distance)
+                        last_status = now
+                    if event and not should_stop():
+                        last_capture = now
+                        LOG.info('Distance trigger %.1fcm; opening camera for one still', distance_trigger.distance)
+                        from picamera import PiCamera
+                        with PiCamera() as camera:
+                            configure_camera(camera)
+                            deadline = time.monotonic() + args.camera_warmup
+                            while time.monotonic() < deadline and not should_stop():
+                                time.sleep(0.05)
+                            if should_stop():
+                                break
+                            import numpy as np
+                            frame = np.empty((args.height, args.width, 3), dtype=np.uint8)
+                            camera.capture(frame, format='bgr', use_video_port=False)
+                        frame_count += 1
+                        if not should_stop():
+                            process_frame(frame, time.monotonic())
+                    deadline = now + args.distance_interval
+                    while time.monotonic() < deadline and not should_stop():
+                        time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+            finally:
+                ranger.close()
     except KeyboardInterrupt:
         LOG.info('Stopping')
     finally:

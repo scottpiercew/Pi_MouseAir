@@ -163,8 +163,8 @@ class ToyLauncher:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--model', type=Path, default=ROOT / 'EfficientNetB0-cat.tflite')
-    parser.add_argument('--confidence', type=float, default=None, help='Cat threshold; default 0.60 for ImageNet models, 0.90 for the original model')
+    parser.add_argument('--model', type=Path, default=ROOT / 'EfficientDetLite0-cat.tflite')
+    parser.add_argument('--confidence', type=float, default=None, help='Default: 0.40 for cat detection, 0.60 for ImageNet classification, 0.90 for the original model')
     parser.add_argument('--cat-index', type=int, choices=(0, 1), default=0)
     parser.add_argument('--cooldown', type=float, default=30.0)
     parser.add_argument('--retry-seconds', type=float, default=5.0, help='Recheck continuing movement after a rejected image')
@@ -194,7 +194,13 @@ def main():
     if not args.model.is_file():
         parser.error('Model file missing; deploy the model and matching JSON metadata first.')
     import cv2
-    classifier = CatClassifier(args.model, args.cat_index)
+    metadata_path = args.model.with_suffix('.json')
+    metadata = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
+    if metadata.get('task') == 'object_detection':
+        from cat_detector import CatObjectDetector
+        classifier = CatObjectDetector(args.model)
+    else:
+        classifier = CatClassifier(args.model, args.cat_index)
     if args.confidence is None:
         args.confidence = classifier.default_confidence
     policy = MotionPolicy(args.confidence, args.cooldown, retry_seconds=args.retry_seconds)
@@ -207,7 +213,8 @@ def main():
         print(json.dumps({'image': str(args.image), 'cat_confidence': score,
                           'accepted': policy.accepts_cat(score, time.monotonic()),
                           'inference_seconds': time.monotonic() - before,
-                          'best_view': classifier.last_view, 'motors_enabled': False}))
+                          'best_view': classifier.last_view, 'motors_enabled': False,
+                          'cats': [d for d in getattr(classifier, 'last_detections', []) if d['score'] >= args.confidence]}))
         return
     from picamera import PiCamera
     from picamera.array import PiRGBArray
@@ -270,7 +277,8 @@ def main():
                     before = time.monotonic()
                     score = classifier.classify(frame)
                     accepted = policy.accepts_cat(score, now)
-                    LOG.info('Motion captured=%s cat=%.1f%% accepted=%s view=%s inference=%.3fs', filename.name, score*100, accepted, classifier.last_view, time.monotonic()-before)
+                    cats = [d for d in getattr(classifier, 'last_detections', []) if d['score'] >= args.confidence]
+                    LOG.info('Motion captured=%s cat=%.1f%% accepted=%s cats=%s view=%s inference=%.3fs', filename.name, score*100, accepted, len(cats), classifier.last_view, time.monotonic()-before)
                     if accepted:
                         if args.armed:
                             if launcher.launch():

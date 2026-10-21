@@ -1,0 +1,16 @@
+{
+  "name": "EfficientDet-Lite0 COCO cat detector",
+  "task": "object_detection",
+  "input_size": 320,
+  "cat_class": 16,
+  "confidence": 0.4,
+  "fallback_crop": [0.15, 0.1, 0.85, 0.95],
+  "output_names": [
+    "StatefulPartitionedCall:3",
+    "StatefulPartitionedCall:2",
+    "StatefulPartitionedCall:1",
+    "StatefulPartitionedCall:0"
+  ],
+  "source_url": "https://storage.googleapis.com/download.tensorflow.org/models/tflite/task_library/object_detection/rpi/lite-model_efficientdet_lite0_detection_metadata_1.tflite",
+  "sha256": "2e04c53bfeac0ac2a30c057c7e2a777594ce39baaac35a92f74fb1e8c4fc4e0b"
+}

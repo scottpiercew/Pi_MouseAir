@@ -14,8 +14,8 @@ def cat_probability(scores, indices):
 
 class MotionPolicy:
     def __init__(self, confidence=0.90, cooldown=30.0, motion_frames=3, quiet_frames=5, retry_seconds=None):
-        if not 0.5 < confidence <= 1.0:
-            raise ValueError('Cat confidence must be greater than 0.5 and at most 1')
+        if not 0 < confidence <= 1.0:
+            raise ValueError('Cat confidence must be greater than 0 and at most 1')
         if cooldown < 0 or motion_frames < 1 or quiet_frames < 1:
             raise ValueError('Invalid debounce/cooldown settings')
         if retry_seconds is not None and (not math.isfinite(retry_seconds) or retry_seconds <= 0):

@@ -2,15 +2,15 @@
 
 Motion-triggered, on-device cat detection and cat-toy control for Raspberry Pi.
 
-`MouseAirMotion.py` detects camera movement, saves a picture, classifies it
-locally with a quantized EfficientNet-B0 model, and launches a loaded toy when
+`MouseAirMotion.py` detects camera movement, saves a picture, locates cats
+locally with a quantized EfficientDet-Lite0 object detector, and launches a loaded toy when
 the cat score meets the configured threshold. No cloud inference is used.
 
 ## Current controller
 
 - Headless 1280×960 capture with configurable backlight exposure settings.
-- Full-frame and perch-view classification using domestic-cat ImageNet labels.
-- Configurable confidence threshold (60% by default).
+- Full-frame cat bounding boxes, including one or several cats in the image.
+- Configurable confidence threshold (40% detection score by default).
 - Five-second retries for continuing movement and a 30-second launch cooldown.
 - Toy-present sensor interlock and motor shutdown after a launch error.
 - Armed mode logs `Toy loaded: YES/NO` at startup and whenever it changes;
@@ -44,26 +44,30 @@ cp config.example.py config.py
 Review GPIO pins and the servo/motor calibration in `state.py` for your
 hardware. An existing private `conflocal.py` takes precedence over `config.py`.
 
-Model binaries and training/camera images are intentionally excluded. On a
-Mac or another suitable build computer with Python 3.12:
+Model binaries and training/camera images are intentionally excluded. Fetch
+our pinned official TensorFlow COCO detector (4.6 MB):
 
 ```sh
-python3 -m venv .model-build
-.model-build/bin/pip install tensorflow==2.16.2 tf-keras==2.16.0
-.model-build/bin/python build_imagenet_model.py
+python3 download_cat_detector.py
 ```
 
-This downloads official Keras ImageNet weights and generates
-`EfficientNetB0-cat.tflite` plus matching JSON metadata. Copy the pair into the
-Pi repository. The model is about 5.8 MB; two-view inference took about 1.2
-seconds per picture on the tested Pi 3. Model building requires internet;
-runtime image classification does not.
+The downloader checks SHA-256 before installation. Keep the TFLite file and
+`EfficientDetLite0-cat.json` together. This detector uses raw RGB uint8 input
+at 320×320 and identifies the COCO `cat` label, irrespective of coat color.
+Either cat can meet the threshold; two weak scores are never added together.
+Clear full-frame detections took about 0.55 seconds on the tested Pi 3;
+uncertain frames get a second center view and take about 1.1 seconds. Downloading
+requires internet; runtime inference does not.
+
+The previous ImageNet classifiers can still be built on a Mac with
+`build_imagenet_model.py` (TensorFlow 2.16.2 and tf-keras 2.16.0). Select an
+older model explicitly with `--model EfficientNetB0-cat.tflite` if needed.
 
 ## Run and test
 
 ```sh
 cd /home/pi/Pi_MouseAir
-python3 -m unittest test_motion_policy test_race_lights -v
+python3 -m unittest test_motion_policy test_race_lights test_cat_detector -v
 python3 -u MouseAirMotion.py --dry-run
 ```
 
@@ -71,7 +75,7 @@ Dry-run logs decisions without importing the motor driver. Once the camera,
 sensor, and calibration are checked, enable the launch sequence explicitly:
 
 ```sh
-python3 -u MouseAirMotion.py --armed --confidence 0.60 --cooldown 30
+python3 -u MouseAirMotion.py --armed --confidence 0.40 --cooldown 30
 ```
 
 Stop with Ctrl-C. Do not run another hardware controller or motor test script
@@ -100,5 +104,7 @@ Adafruit driver retains its own [license](Adafruit_Python_PCA9685/LICENSE).
 The motion-triggered controller, model build tooling, and accompanying tests
 extend that original project. No new license is asserted for upstream code.
 
-Model architecture and pretrained-weight source:
-[Keras EfficientNet](https://keras.io/2/api/applications/efficientnet/).
+Default detector and pretrained weights:
+[TensorFlow Raspberry Pi object detection example](https://github.com/tensorflow/examples/tree/master/lite/examples/object_detection/raspberry_pi).
+The model URL and pinned checksum are recorded in `EfficientDetLite0-cat.json`.
+Legacy classifier source: [Keras EfficientNet](https://keras.io/2/api/applications/efficientnet/).
